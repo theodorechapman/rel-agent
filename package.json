@@ -1,15 +1,24 @@
 {
-  "name": "imessage-sdk-demo",
+  "name": "relationship-agent",
   "version": "1.0.0",
-  "description": "Simple demo of @photon-ai/imessage-kit SDK",
+  "description": "AI-powered iMessage relationship agent that maintains conversations in your style",
   "type": "module",
   "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "demo": "tsx demo.ts",
     "demo:watch": "tsx demo-watch.ts"
   },
   "dependencies": {
+    "@ai-sdk/cerebras": "^1.0.31",
+    "@ai-sdk/openai": "^2.0.71",
+    "@mastra/core": "^0.24.5",
     "@photon-ai/imessage-kit": "latest",
-    "better-sqlite3": "^12.4.5"
+    "ai": "^5.0.98",
+    "better-sqlite3": "^12.4.5",
+    "dotenv": "^17.2.3",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
