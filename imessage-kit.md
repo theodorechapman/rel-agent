@@ -1,0 +1,641 @@
+@photon-ai/imessage-kit
+
+    A type-safe, elegant iMessage SDK for macOS with cross-runtime support
+
+npm version TypeScript License Discord
+
+It lets you read, send, and automate iMessage conversations directly from Node.js or Bun. Built for developers who want to integrate messaging into their AI agents, automation scripts, or chat-first apps, without AppleScript headaches.
+
+Note
+
+✨ Looking for advanced features like threaded replies, tapbacks, message editing, unsending, live typing indicators, and group chats? Or need hosting / enterprise-grade scalability? Check out our Advanced iMessage Kit and contact us at daniel@photon.codes.
+Features
+
+    100% Type-safe - Full TypeScript support with perfect type inference
+    Cross-Runtime - Supports both Node.js and Bun with automatic runtime detection
+    Smart Database - Uses native bun:sqlite for Bun, better-sqlite3 for Node.js
+    Read Messages - Query iMessage, SMS, and RCS messages with powerful filters
+    Send Messages - Send text, images, and files (PDF, CSV, VCF, etc.)
+    Fluent API - Elegant message chain processing
+    Real-time Watching - Monitor new messages with webhook support (works even in Do Not Disturb mode)
+    Plugin System - Extensible architecture for custom behaviors
+    Performance - Concurrent message sending with semaphore control
+    Error Handling - Comprehensive error types and type guards
+
+Hello, iMessage
+
+import { IMessageSDK } from '@photon-ai/imessage-kit'
+
+const sdk = new IMessageSDK()
+await sdk.send('+1234567890', 'Hello from iMessage Kit!')
+
+Installation
+
+# For Bun (zero dependencies)
+bun add @photon-ai/imessage-kit
+
+# For Node.js (requires better-sqlite3)
+npm install @photon-ai/imessage-kit better-sqlite3
+# or
+yarn add @photon-ai/imessage-kit better-sqlite3
+
+Granting Permission
+
+IMessageKit requires Full Disk Access to read your chat history and perform automation tasks.
+
+Before starting, make sure to grant the necessary permissions to the IDE or terminal where you plan to run the program:
+
+    Open System Settings → Privacy & Security → Full Disk Access.
+    Click the “+” button and add the IDE or terminal you are using.
+
+In the example below, access has been granted to Zed and Terminal, allowing IMessageKit to function properly with both.
+
+If you use other tools such as Cursor, VS Code, or Warp, make sure to grant them permission as well.
+
+Quick Start
+
+import { IMessageSDK } from '@photon-ai/imessage-kit'
+
+// Initialize SDK (works in both Node.js and Bun)
+const sdk = new IMessageSDK({
+    debug: true,
+    maxConcurrent: 5
+})
+
+// Get unread messages
+const unread = await sdk.getUnreadMessages()
+console.log(`${unread.total} unread from ${unread.senderCount} senders`)
+for (const { sender, messages } of unread.groups) {
+    console.log(`${sender}: ${messages.length} unread messages`)
+}
+
+// Send messages (unified API)
+await sdk.send('+1234567890', 'Hello!')
+await sdk.send('+1234567890', { images: ['photo.jpg'] })
+await sdk.send('+1234567890', { files: ['document.pdf', 'contact.vcf'] })
+await sdk.send('+1234567890', { text: 'Check this out', images: ['photo.jpg'], files: ['data.csv'] })
+
+// Always close when done
+await sdk.close()
+
+Core APIs
+Reading Messages
+
+// Get messages (excludes your own by default)
+const result = await sdk.getMessages()
+
+// Filter messages
+const filtered = await sdk.getMessages({
+    sender: '+1234567890',
+    unreadOnly: true,
+    limit: 20,
+    since: new Date('2025-10-20')
+})
+
+// Search messages by text content
+const searchResults = await sdk.getMessages({
+    search: 'meeting',
+    limit: 50
+})
+
+// Include your own messages
+const all = await sdk.getMessages({ excludeOwnMessages: false })
+
+// Get unread messages grouped by sender
+const unread = await sdk.getUnreadMessages()
+console.log(`Total: ${unread.total}, Senders: ${unread.senderCount}`)
+
+Sending Messages
+
+// Unified send API - automatically detects recipient or chatId
+await sdk.send(target, content)
+
+// Get sent message immediately (requires watcher)
+await sdk.startWatching()
+const result = await sdk.send('+1234567890', 'Hello!')
+if (result.message) {
+    console.log('Sent message:', result.message.text)
+    console.log('Message ID:', result.message.id)
+}
+
+// Send to phone number
+await sdk.send('+1234567890', 'Hello World!')
+
+// Send to email
+await sdk.send('user@example.com', 'Hello!')
+
+// Send to group chat (using chatId)
+await sdk.send('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
+
+// Send images
+await sdk.send('+1234567890', { 
+    images: ['image1.jpg', 'image2.png'] 
+})
+
+// Send files (PDF, CSV, VCF, etc.)
+await sdk.send('+1234567890', { 
+    files: ['document.pdf', 'data.csv', 'contact.vcf'] 
+})
+
+// Send text with images and files
+await sdk.send('+1234567890', { 
+    text: 'Check these files',
+    images: ['photo.jpg'],
+    files: ['report.pdf']
+})
+
+// Send network images (auto-download)
+await sdk.send('+1234567890', { 
+    images: ['https://example.com/image.jpg'] 
+})
+
+// Convenience methods for files (works with both recipient and chatId)
+await sdk.sendFile('+1234567890', '/path/to/document.pdf')
+await sdk.sendFile('chat123...', '/path/to/report.pdf', 'Here is the file')
+await sdk.sendFiles('+1234567890', ['file1.pdf', 'file2.csv'], 'Multiple files')
+
+// Batch sending
+await sdk.sendBatch([
+    { to: '+1111111111', content: 'Message 1' },
+    { to: '+2222222222', content: { text: 'Message 2', images: ['img.jpg'] } },
+    { to: 'chat123...', content: { files: ['document.pdf'] } }
+])
+
+Note: The send() method automatically detects whether you're sending to:
+
+    A recipient (phone number or email): '+1234567890', 'user@example.com'
+    A chatId (group or DM): 'chat123...', 'iMessage;+1234567890'
+
+Listing Chats
+
+listChats() returns both group and direct chats with filtering and sorting options:
+
+// Get all chats
+const all = await sdk.listChats()
+
+// Get recent group chats with unread messages
+const groups = await sdk.listChats({
+    type: 'group',
+    hasUnread: true,
+    limit: 20
+})
+
+// Search chats by name
+const found = await sdk.listChats({
+    search: 'John',
+    sortBy: 'name'
+})
+
+// Backward compatible: limit only
+const recent = await sdk.listChats(50)
+
+// Each chat includes unreadCount
+for (const c of chats) {
+  console.log({
+    chatId: c.chatId,
+    name: c.displayName,
+    last: c.lastMessageAt,
+    isGroup: c.isGroup,
+    unread: c.unreadCount  // ← New field
+  })
+}
+
+ChatId formats:
+
+    Group: chatId = chat.guid (stable GUID, recommended for all group routing)
+    Direct (DM): chatId = "<service>;<address>" (for example iMessage;+1234567890 or SMS;+1234567890)
+
+Note on ChatId formats:
+
+    Group chats: Use the GUID from listChats() (e.g., chat45e2b868ce1e43da89af262922733382)
+    Direct messages: Use phone/email directly (e.g., +1234567890, user@example.com)
+    The SDK also accepts AppleScript format iMessage;+;chat... for groups (auto-normalized)
+    Service-prefixed DMs like iMessage;+1234567890 are supported (from database)
+
+ChatId Format Matching:
+
+The SDK intelligently handles different chatId formats to ensure reliable message tracking:
+
+    When sending: The SDK constructs chatIds in the format iMessage;-;recipient for DMs
+    In database: Messages may be stored with just the recipient (e.g., pilot@photon.codes)
+    Automatic normalization: The SDK extracts the core identifier (the part after the last semicolon) to match both formats
+        iMessage;-;pilot@photon.codes → normalizes to pilot@photon.codes
+        pilot@photon.codes → normalizes to pilot@photon.codes
+        Both match successfully ✓
+
+This ensures that sent messages are correctly tracked and resolved, even when database and constructed formats differ.
+Message Chain Processing
+
+The SDK provides a fluent API for elegant message processing:
+
+// Basic chain processing
+await sdk.message(msg)
+    .matchText(/hello/i)
+    .replyText('Hi there!')
+    .execute()
+
+// Complex conditions
+await sdk.message(msg)
+    .ifUnread()
+    .when(m => m.sender.startsWith('+1'))
+    .replyText('Received!')
+    .execute()
+
+// Reply with images
+await sdk.message(msg)
+    .matchText('photo')
+    .replyImage(['photo.jpg', 'photo2.jpg'])
+    .execute()
+
+// Group chat only
+await sdk.message(msg)
+    .ifGroupChat()
+    .replyText('Group reply!')
+    .execute()
+
+Note: Replies in the chain always target message.chatId (supports both DM and group).
+Real-time Message Watching
+
+// Configure watcher
+const sdk = new IMessageSDK({
+    watcher: {
+        pollInterval: 3000,        // Check interval (default: 2000ms)
+        unreadOnly: false,         // Watch all messages (default: false)
+        excludeOwnMessages: true   // Exclude own messages (default: true)
+    }
+})
+
+// Start watching for direct messages
+await sdk.startWatching({
+    onDirectMessage: async (message) => {
+        await sdk.message(message)
+            .replyText('Thanks!')
+            .execute()
+    },
+    
+    onError: (error) => {
+        console.error('Error:', error)
+    }
+})
+
+sdk.stopWatching()
+
+More examples:
+
+// Watch all messages (DMs + groups)
+await sdk.startWatching({
+    onMessage: async (message) => {
+        console.log(`New message from ${message.sender}: ${message.text}`)
+    }
+})
+
+// Watch only group messages
+await sdk.startWatching({
+    onGroupMessage: async (message) => {
+        console.log(`Group message in ${message.chatId}`)
+    }
+})
+
+// Watch both DMs and groups separately
+await sdk.startWatching({
+    onDirectMessage: async (message) => {
+        // Handle DM
+        await sdk.send(message.sender, 'Thanks for your DM!')
+    },
+    onGroupMessage: async (message) => {
+        // Handle group message
+        console.log(`Group: ${message.chatId}`)
+    }
+})
+
+Webhook Integration
+
+const sdk = new IMessageSDK({
+    webhook: {
+        url: 'https://your-server.com/webhook',
+        headers: { 'Authorization': 'Bearer token' }
+    }
+})
+
+await sdk.startWatching()
+// Webhook receives: { event, message, timestamp }
+
+Working with Attachments
+
+The SDK provides helper functions for working with attachments:
+
+import {
+    attachmentExists,
+    downloadAttachment,
+    getAttachmentSize,
+    isImageAttachment,
+    isVideoAttachment
+} from '@photon-ai/imessage-kit'
+
+const message = await sdk.getMessages({ hasAttachments: true, limit: 1 })
+const attachment = message.messages[0].attachments[0]
+
+// Check if file exists
+if (await attachmentExists(attachment)) {
+    // Get file size
+    const size = await getAttachmentSize(attachment)
+    console.log(`File size: ${(size / 1024 / 1024).toFixed(2)} MB`)
+    
+    // Check file type
+    if (isImageAttachment(attachment)) {
+        // Download image
+        await downloadAttachment(attachment, '/path/to/save/image.jpg')
+    } else if (isVideoAttachment(attachment)) {
+        console.log('Video file')
+    }
+}
+
+Available helpers:
+
+    attachmentExists(attachment) - Check if file exists
+    downloadAttachment(attachment, destPath) - Copy file to destination
+    getAttachmentSize(attachment) - Get file size in bytes
+    getAttachmentMetadata(attachment) - Get file stats
+    readAttachment(attachment) - Read file as Buffer
+    getAttachmentExtension(attachment) - Get file extension
+    isImageAttachment(attachment) - Check if image
+    isVideoAttachment(attachment) - Check if video
+    isAudioAttachment(attachment) - Check if audio
+
+Plugin System
+
+Extend SDK functionality with plugins:
+
+import { loggerPlugin } from '@photon-ai/imessage-kit'
+
+// Use built-in logger plugin
+sdk.use(loggerPlugin({
+    level: 'info',
+    colored: true,
+    timestamp: false
+}))
+
+// Create custom plugin
+const customPlugin = {
+    name: 'my-plugin',
+    onInit: async () => {
+        console.log('Plugin initialized')
+    },
+    onBeforeSend: async (to, content) => {
+        console.log('Sending to:', to)
+        return { to, content }
+    },
+    onAfterSend: async (result) => {
+        console.log('Send result:', result)
+    },
+    onDestroy: async () => {
+        console.log('Plugin destroyed')
+    }
+}
+
+sdk.use(customPlugin)
+
+Finding Group Chat IDs
+
+To send messages to a group chat, you need its chatId. Use listChats() to find it:
+
+// List all chats
+const chats = await sdk.listChats()
+
+// Filter for group chats only
+const groups = await sdk.listChats({ type: 'group' })
+
+// Search by name
+const projectChats = await sdk.listChats({ search: 'Project', type: 'group' })
+
+// Each chat has a chatId you can use for sending
+for (const chat of groups) {
+    console.log(`${chat.displayName}: ${chat.chatId}`)
+}
+
+Then use the chatId to send messages:
+
+// Send to group using chatId from listChats()
+await sdk.send('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
+await sdk.send('chat45e2b868ce1e43da89af262922733382', {
+    text: 'Check these files',
+    files: ['/file1.pdf', '/file2.csv']
+})
+
+ChatId Formats:
+
+    Group chats: GUID format (e.g., chat45e2b868ce1e43da89af262922733382)
+    Direct messages: service;address format (e.g., iMessage;+1234567890)
+    The SDK also accepts AppleScript format iMessage;+;chat... for groups (auto-normalized)
+
+Advanced Usage
+Configuration Options
+
+const sdk = new IMessageSDK({
+    debug: true,                     // Enable debug logging
+    maxConcurrent: 10,               // Max concurrent sends
+    scriptTimeout: 30000,            // AppleScript timeout (ms)
+    databasePath: '/custom/path',    // Custom database path
+    plugins: [loggerPlugin()],       // Plugins
+    
+    // Watcher configuration
+    watcher: {
+        pollInterval: 2000,          // Polling interval in ms (default: 2000)
+        unreadOnly: false,           // Only watch unread messages (default: false)
+        excludeOwnMessages: true,    // Exclude your own messages (default: true)
+        initialLookbackMs: 10000     // Initial lookback time in ms (default: 10000)
+                                     // Set to 0 to only process new messages
+                                     // Note: May cause duplicate processing if watcher restarts frequently
+    }
+})
+
+Advanced Options:
+
+    initialLookbackMs: Controls how far back the watcher looks when it first starts
+        Default: 10000 (10 seconds) - catches messages sent just before watcher starts
+        Set to 0 - only process messages sent after watcher starts (no lookback)
+        Set to 5000 - lookback 5 seconds
+        Warning: If you frequently restart the watcher, this may cause duplicate message processing
+
+Error Handling
+
+import { SendError, DatabaseError } from '@photon-ai/imessage-kit'
+
+try {
+    await sdk.send('+1234567890', 'Hello')
+} catch (error) {
+    if (error instanceof SendError) {
+        console.error('Send failed:', error.message)
+    }
+}
+
+Examples
+
+Check the examples/ directory for complete examples:
+
+    01-send-text.ts - Basic text message
+    02-send-image.ts - Send images
+    03-send-file.ts - Send files
+    04-send-group.ts - Send to group chat
+    05-query-messages.ts - Query messages
+    06-list-chats.ts - List all chats
+    07-watch-messages.ts - Watch for new messages
+    08-auto-reply.ts - Auto-reply bot
+    09-batch-send.ts - Batch sending
+    10-get-sent-message.ts - Get sent message immediately
+    11-plugin.ts - Custom plugin
+    12-error-handling.ts - Error handling
+    13-watch-own-messages.ts - Watch own messages
+
+Development
+
+# Install dependencies
+npm install
+# or
+bun install
+
+# Run tests
+npm test        # runs bun test
+# or
+bun test
+
+# Run tests with coverage
+bun test --coverage
+
+# Build
+npm run build
+# or
+bun run build
+
+# Lint
+npm run lint
+# or
+bun run lint
+
+# Type check
+npm run type-check
+# or
+bun run type-check
+
+Requirements
+
+    OS: macOS only (accesses iMessage database)
+    Runtime: Node.js >= 18.0.0 or Bun >= 1.0.0
+    Database Driver:
+        Bun: Uses built-in bun:sqlite (no extra dependencies)
+        Node.js: Requires better-sqlite3 (install separately)
+    Permissions: Read access to ~/Library/Messages/chat.db
+
+    Note: The SDK automatically detects your runtime and uses the appropriate database driver.
+
+Important Notes
+Message Watching Behavior
+
+    Automatically excludes your own messages (set excludeOwnMessages: false to include them)
+    Works in Do Not Disturb mode (timestamp-based detection)
+    Use onMessage for all messages, onDirectMessage for DMs only, or onGroupMessage for groups only
+
+Supported File Types
+
+The SDK supports sending any file type that macOS Messages app accepts, including but not limited to:
+
+    Documents: PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, RTF
+    Images: JPG, PNG, GIF, HEIC, WEBP (auto-converted), AVIF (auto-converted)
+    Contact Cards: VCF (vCard format)
+    Data Files: CSV, JSON, XML
+    Archives: ZIP, RAR, 7Z
+    Media: MP4, MOV, MP3, M4A
+    And more: Any file format supported by macOS Messages
+
+Note: Large files are automatically uploaded to iCloud when sending via iMessage. For SMS recipients, file size limits may apply depending on your carrier.
+Security
+
+    This SDK reads from the local iMessage database
+    No data is sent to external servers (except your webhook if configured)
+    Network images are downloaded to temporary files and cleaned up automatically
+    Always validate user input when building bots
+    ChatId is validated as either a group GUID (no ;) or a DM identifier in the form <service>;<address> (e.g., iMessage;+1234567890). Invalid inputs throw early.
+
+API Reference
+Main Methods
+
+    getMessages(filter?) - Query messages with optional filters
+    getUnreadMessages() - Get unread messages with statistics (total, senderCount, groups)
+    listChats(options?) - List chats with filtering/sorting (type, hasUnread, sortBy, search, limit)
+    send(to, content) - Send text, images, and/or files (returns SendResult with optional message)
+    sendFile(to, filePath, text?) - Send a single file (supports recipient or chatId)
+    sendFiles(to, filePaths, text?) - Send multiple files (supports recipient or chatId)
+    sendBatch(messages) - Send multiple messages concurrently
+    message(msg) - Create message processing chain
+    startWatching(events?) - Start monitoring new messages
+    stopWatching() - Stop monitoring
+    use(plugin) - Register plugin
+    close() - Close SDK and release resources
+
+SendResult
+
+interface SendResult {
+    sentAt: Date                // When message was sent
+    message?: Message           // The sent message (only if watcher is running)
+}
+
+Note: To get the message field populated, you must start the watcher before sending:
+
+await sdk.startWatching()
+const result = await sdk.send('+1234567890', 'Hello')
+// result.message will be available within ~2 seconds
+
+Message Object
+
+Each message object includes:
+
+interface Message {
+    id: string              // Message ID
+    guid: string            // Globally unique identifier
+    text: string | null     // Message text content
+    sender: string          // Sender (phone/email)
+    senderName: string | null  // Sender display name
+    chatId: string          // Chat identifier
+    isGroupChat: boolean    // Whether this is a group chat message
+    isFromMe: boolean       // Whether sent by current user
+    isRead: boolean         // Read status
+    service: ServiceType    // 'iMessage' | 'SMS' | 'RCS'
+    attachments: readonly Attachment[]  // File attachments
+    date: Date              // Message timestamp
+}
+
+Query Results
+
+interface MessageQueryResult {
+    messages: readonly Message[]  // Message list
+    total: number                  // Total count
+    unreadCount: number            // Unread count
+}
+
+interface UnreadMessagesResult {
+    groups: Array<{                // Messages grouped by sender
+        sender: string
+        messages: readonly Message[]
+    }>
+    total: number                  // Total unread messages
+    senderCount: number            // Number of unique senders
+}
+
+WatcherEvents
+
+interface WatcherEvents {
+    onMessage?: (message: Message) => void | Promise<void>        // All messages
+    onDirectMessage?: (message: Message) => void | Promise<void> // DMs only
+    onGroupMessage?: (message: Message) => void | Promise<void>  // Groups only
+    onError?: (error: Error) => void
+}
+
+Callback execution order:
+
+    onMessage - fires for all messages (if defined)
+    onDirectMessage or onGroupMessage - fires based on message type
+    Webhook notification (if configured)
+
+For full TypeScript definitions, see the types directory.
+License
+This project is licensed under the MIT License.

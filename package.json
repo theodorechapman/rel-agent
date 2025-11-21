@@ -1,0 +1,19 @@
+{
+  "name": "imessage-sdk-demo",
+  "version": "1.0.0",
+  "description": "Simple demo of @photon-ai/imessage-kit SDK",
+  "type": "module",
+  "scripts": {
+    "demo": "tsx demo.ts",
+    "demo:watch": "tsx demo-watch.ts"
+  },
+  "dependencies": {
+    "@photon-ai/imessage-kit": "latest",
+    "better-sqlite3": "^12.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.0.0"
+  }
+}
