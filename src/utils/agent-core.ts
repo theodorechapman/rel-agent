@@ -36,6 +36,14 @@ export async function sendTakeoverPrompt(
   conv: ConversationState,
   config: AgentConfig
 ): Promise<void> {
+  // Double-check: don't send if agent is already active or awaiting approval
+  if (conv.isAgentActive || conv.awaitingApproval) {
+    if (config.debug) {
+      console.log(`[AgentCore] Skipping takeover prompt for ${conv.chatId} (already active or awaiting)`)
+    }
+    return
+  }
+
   const friendName = await getFriendName(sdk, conv.chatId)
 
   // Update friend name in tracker
@@ -44,17 +52,19 @@ export async function sendTakeoverPrompt(
   const promptMessage = `Hey, are you trying to ghost ${friendName} or do you want me to take over?`
 
   try {
-    // Send to user's own identifier
-    await sdk.send(config.userIdentifier, promptMessage)
-
-    // Mark as waiting for approval
+    // Mark as waiting for approval FIRST to prevent race conditions
     tracker.markAwaitingApproval(conv.chatId)
+
+    // Then send to user's own identifier
+    await sdk.send(config.userIdentifier, promptMessage)
 
     if (config.debug) {
       console.log(`[AgentCore] Sent takeover prompt for ${friendName}`)
     }
   } catch (error) {
     console.error('[AgentCore] Error sending takeover prompt:', error)
+    // If send fails, reset the awaiting approval state
+    tracker.resetConversation(conv.chatId)
   }
 }
 
@@ -70,9 +80,11 @@ export async function waitForResponse(
   return new Promise((resolve) => {
     const startTime = Date.now()
 
-    // Get the current conversation history to track what we've already seen
+    // Get the last message timestamp to detect new messages
     const initialHistory = tracker.getConversationHistory(chatId, 10)
-    const initialMessageCount = initialHistory.length
+    const lastSeenTimestamp = initialHistory.length > 0
+      ? initialHistory[initialHistory.length - 1].date.getTime()
+      : 0
 
     const timeout = setTimeout(() => {
       clearInterval(checkInterval)
@@ -93,20 +105,17 @@ export async function waitForResponse(
       // Check for new messages in conversation history
       const currentHistory = tracker.getConversationHistory(chatId, 10)
 
-      // If we have more messages than before, check the new ones
-      if (currentHistory.length > initialMessageCount) {
-        const newMessages = currentHistory.slice(initialMessageCount)
+      // Look for messages that arrived after our last seen message
+      const newIncoming = currentHistory.find(m =>
+        !m.isFromMe &&
+        m.date.getTime() > lastSeenTimestamp &&
+        m.date.getTime() >= startTime
+      )
 
-        // Look for incoming messages (not from me) that arrived after we started waiting
-        const newIncoming = newMessages.find(m =>
-          !m.isFromMe && m.date.getTime() >= startTime
-        )
-
-        if (newIncoming) {
-          clearInterval(checkInterval)
-          clearTimeout(timeout)
-          resolve(newIncoming)
-        }
+      if (newIncoming) {
+        clearInterval(checkInterval)
+        clearTimeout(timeout)
+        resolve(newIncoming)
       }
     }, 2000) // Check every 2 seconds
   })

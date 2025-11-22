@@ -29,6 +29,9 @@ export interface ConversationState {
   /** Number of messages the agent has sent in this session */
   messagesSent: number
 
+  /** Timestamp of when the agent was last deactivated (for re-activation logic) */
+  lastAgentDeactivationTime: Date | null
+
   /** History of user's messages from this conversation */
   userMessageHistory: Message[]
 

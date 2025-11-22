@@ -81,16 +81,19 @@ async function main() {
             // Check if agent is active for this conversation
             const conv = tracker.getConversation(message.chatId)
 
-            // If agent is active, this is an agent-sent message - don't process it
+            // If agent is active, this is an agent-sent message
             if (conv?.isAgentActive) {
+              // Update timestamp but mark as agent message (fixes inactivity loop)
+              tracker.updateOutgoingMessage(message.chatId, message, true)
+
               if (config.debug) {
-                console.log(`[Main] Ignoring agent-sent message to ${message.chatId}`)
+                console.log(`[Main] Agent-sent message to ${message.chatId}`)
               }
               return
             }
 
             // User sent a message
-            tracker.updateOutgoingMessage(message.chatId, message)
+            tracker.updateOutgoingMessage(message.chatId, message, false)
 
             // Check if this is a response to our takeover prompt
             // User responds to themselves (USER_IDENTIFIER), so check ALL conversations
@@ -98,9 +101,28 @@ async function main() {
             const awaitingConv = allConversations.find(c => c.awaitingApproval)
 
             if (awaitingConv && message.chatId === config.userIdentifier) {
-              const response = parseUserResponse(message.text || '')
+              // Ignore the prompt message itself (it contains "take over" which would trigger approval)
+              const messageText = message.text || ''
+              // More robust check: ignore if it contains the full prompt pattern OR is too similar
+              if (messageText.includes('are you trying to ghost') ||
+                  messageText.includes('do you want me to take over?')) {
+                if (config.debug) {
+                  console.log('[Main] Ignoring takeover prompt echo')
+                }
+                return
+              }
+
+              const response = parseUserResponse(messageText)
 
               if (response === 'approve') {
+                // Check if agent is already active (prevent duplicate activation)
+                if (awaitingConv.isAgentActive) {
+                  if (config.debug) {
+                    console.log(`[Main] Agent already active for ${awaitingConv.friendName}, ignoring approval`)
+                  }
+                  return
+                }
+
                 if (config.debug) {
                   console.log(`\n[Main] ✅ User approved takeover for ${awaitingConv.friendName}`)
                 }
@@ -124,6 +146,35 @@ async function main() {
 
             if (config.debug) {
               console.log(`\n[Main] 📨 Message from ${message.senderName || message.sender}`)
+            }
+
+            // Check if agent was recently active in this conversation
+            const conv = tracker.getConversation(message.chatId)
+            if (conv && conv.lastAgentDeactivationTime && !conv.isAgentActive && !conv.awaitingApproval) {
+              const timeSinceDeactivation = Date.now() - conv.lastAgentDeactivationTime.getTime()
+              // If agent was deactivated within last 5 minutes, reactivate after 5 seconds
+              if (timeSinceDeactivation < 300000) { // 5 minutes
+                if (config.debug) {
+                  console.log(`[Main] Friend responded ${Math.round(timeSinceDeactivation / 1000)}s after agent deactivation`)
+                  console.log('[Main] ⏳ Waiting 5 seconds before reactivating agent...')
+                }
+
+                // Wait 5 seconds before reactivating
+                setTimeout(async () => {
+                  // Double-check that user hasn't taken over in the meantime
+                  const currentConv = tracker.getConversation(message.chatId)
+                  if (currentConv && !currentConv.isAgentActive && !currentConv.awaitingApproval) {
+                    try {
+                      if (config.debug) {
+                        console.log(`[Main] 🤖 Auto-reactivating agent for ${currentConv.friendName}`)
+                      }
+                      await activateAgent(sdk, tracker, currentConv, config)
+                    } catch (error) {
+                      console.error('[Main] Error reactivating agent:', error)
+                    }
+                  }
+                }, 5000) // 5 second delay
+              }
             }
           }
         } catch (error) {

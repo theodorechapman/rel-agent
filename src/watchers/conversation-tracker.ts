@@ -17,14 +17,20 @@ export class ConversationTracker {
   /**
    * Update tracking when user sends an outgoing message
    */
-  updateOutgoingMessage(chatId: string, message: Message): void {
+  updateOutgoingMessage(chatId: string, message: Message, isAgentMessage = false): void {
     const conv = this.getOrCreateConversation(chatId)
 
+    // Always update timestamp (fixes inactivity loop bug)
     conv.lastOutgoingTimestamp = message.date
-    conv.userMessageHistory.push(message)
+
+    // Only add to user history if it's not an agent message
+    if (!isAgentMessage) {
+      conv.userMessageHistory.push(message)
+    }
 
     // If user responds while agent is active, deactivate the agent
-    if (conv.isAgentActive) {
+    // But don't deactivate if the agent itself sent the message
+    if (conv.isAgentActive && !isAgentMessage) {
       if (this.debug) {
         console.log(`[Tracker] User took back control in ${chatId}`)
       }
@@ -32,13 +38,15 @@ export class ConversationTracker {
       conv.messagesSent = 0
     }
 
-    // Reset approval state
-    conv.awaitingApproval = false
+    // Reset approval state only if user sent the message
+    if (!isAgentMessage) {
+      conv.awaitingApproval = false
+    }
 
     this.conversations.set(chatId, conv)
 
     if (this.debug) {
-      console.log(`[Tracker] Updated outgoing: ${chatId}`)
+      console.log(`[Tracker] Updated outgoing: ${chatId}${isAgentMessage ? ' (agent)' : ''}`)
     }
   }
 
@@ -85,7 +93,10 @@ export class ConversationTracker {
           const timeSinceIncoming = now - conv.lastIncomingTimestamp.getTime()
           // Friend message should be recent (within 5 minutes)
           if (timeSinceIncoming < 300000) {
-            inactive.push(conv)
+            // Double-check state before adding (extra safeguard against race conditions)
+            if (!conv.isAgentActive && !conv.awaitingApproval) {
+              inactive.push(conv)
+            }
           }
         }
       }
@@ -133,6 +144,7 @@ export class ConversationTracker {
     if (conv) {
       conv.isAgentActive = false
       conv.messagesSent = 0
+      conv.lastAgentDeactivationTime = new Date() // Track when agent was deactivated
 
       if (this.debug) {
         console.log(`[Tracker] Agent deactivated: ${chatId}`)
@@ -228,6 +240,7 @@ export class ConversationTracker {
         isAgentActive: false,
         awaitingApproval: false,
         messagesSent: 0,
+        lastAgentDeactivationTime: null,
         userMessageHistory: [],
         conversationHistory: []
       }
