@@ -1,4 +1,4 @@
-# Relationship Agent 🤖💬
+# Never Ghost Again Relationship Agent
 
 An AI-powered iMessage assistant that monitors your conversations, detects inactivity, and offers to take over conversations in your exact texting style. Built with [`@photon-ai/imessage-kit`](https://github.com/photon-ai/imessage-kit) and [Mastra AI framework](https://mastra.ai).
 
@@ -12,7 +12,7 @@ An AI-powered iMessage assistant that monitors your conversations, detects inact
   - Capitalization patterns
   - Emoji usage
   - Punctuation style
-- **Natural Conversations**: Sends 2-3 contextually appropriate responses
+- **Natural Conversations**: Sends 5-6 contextually appropriate responses
 - **Graceful Wind-Down**: Exits conversations naturally in your style
 - **User Control**: Instantly deactivates if you respond manually
 - **5-Minute Control Window**: Agent automatically deactivates after 5 minutes to prevent over-automation
@@ -335,7 +335,7 @@ Contributions welcome! Please:
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT License
 
 ## Credits
 
