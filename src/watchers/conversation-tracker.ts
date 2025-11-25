@@ -122,18 +122,37 @@ export class ConversationTracker {
 
   /**
    * Mark the agent as active in a conversation
+   * @param isInitialActivation - true if this is the first activation (sets agentActivationTime)
    */
-  markAgentActive(chatId: string): void {
+  markAgentActive(chatId: string, isInitialActivation: boolean = true): void {
     const conv = this.conversations.get(chatId)
     if (conv) {
       conv.isAgentActive = true
       conv.awaitingApproval = false
-      conv.messagesSent = 0
+
+      // Only reset messagesSent and set activation time on initial activation
+      if (isInitialActivation) {
+        conv.messagesSent = 0
+        conv.agentActivationTime = new Date()
+      }
 
       if (this.debug) {
-        console.log(`[Tracker] Agent activated: ${chatId}`)
+        console.log(`[Tracker] Agent activated: ${chatId}${isInitialActivation ? ' (initial)' : ' (continued)'}`)
       }
     }
+  }
+
+  /**
+   * Check if the conversation is within the AI control window (5 minutes)
+   */
+  isWithinAgentWindow(chatId: string, windowMs: number = 300000): boolean {
+    const conv = this.conversations.get(chatId)
+    if (!conv || !conv.agentActivationTime) {
+      return false
+    }
+
+    const elapsed = Date.now() - conv.agentActivationTime.getTime()
+    return elapsed < windowMs
   }
 
   /**
@@ -145,6 +164,7 @@ export class ConversationTracker {
       conv.isAgentActive = false
       conv.messagesSent = 0
       conv.lastAgentDeactivationTime = new Date() // Track when agent was deactivated
+      conv.agentActivationTime = null // Clear the activation time
 
       if (this.debug) {
         console.log(`[Tracker] Agent deactivated: ${chatId}`)
@@ -172,6 +192,7 @@ export class ConversationTracker {
       conv.isAgentActive = false
       conv.awaitingApproval = false
       conv.messagesSent = 0
+      conv.agentActivationTime = null
       this.conversations.set(chatId, conv)
 
       if (this.debug) {
@@ -241,6 +262,7 @@ export class ConversationTracker {
         awaitingApproval: false,
         messagesSent: 0,
         lastAgentDeactivationTime: null,
+        agentActivationTime: null,
         userMessageHistory: [],
         conversationHistory: []
       }
@@ -254,3 +276,4 @@ export class ConversationTracker {
     return conv
   }
 }
+

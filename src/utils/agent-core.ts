@@ -1,11 +1,18 @@
 /**
  * Agent Core - Main logic for agent activation and conversation management
+ * 
+ * Uses event-driven response handling: when the agent sends a message,
+ * it returns immediately. The incoming message handler in index.ts
+ * detects friend responses and triggers the next agent message.
  */
 
 import type { IMessageSDK, Message } from '@photon-ai/imessage-kit'
 import type { ConversationState, AgentConfig } from '../types/index.js'
 import type { ConversationTracker } from '../watchers/conversation-tracker.js'
 import { relationshipAgent } from '../agent/relationship-agent.js'
+
+/** 5 minutes in milliseconds - the AI control window */
+export const AI_CONTROL_WINDOW_MS = 300000
 
 /**
  * Get friend's display name from chat
@@ -69,73 +76,49 @@ export async function sendTakeoverPrompt(
 }
 
 /**
- * Wait for a response from the friend with timeout
- */
-export async function waitForResponse(
-  sdk: IMessageSDK,
-  chatId: string,
-  timeoutMs: number,
-  tracker: ConversationTracker
-): Promise<Message | null> {
-  return new Promise((resolve) => {
-    const startTime = Date.now()
-
-    // Get the last message timestamp to detect new messages
-    const initialHistory = tracker.getConversationHistory(chatId, 10)
-    const lastSeenTimestamp = initialHistory.length > 0
-      ? initialHistory[initialHistory.length - 1].date.getTime()
-      : 0
-
-    const timeout = setTimeout(() => {
-      clearInterval(checkInterval)
-      resolve(null)
-    }, timeoutMs)
-
-    // Poll for new messages
-    const checkInterval = setInterval(async () => {
-      // Check if agent is still active (user might have taken over)
-      const conv = tracker.getConversation(chatId)
-      if (!conv || !conv.isAgentActive) {
-        clearInterval(checkInterval)
-        clearTimeout(timeout)
-        resolve(null)
-        return
-      }
-
-      // Check for new messages in conversation history
-      const currentHistory = tracker.getConversationHistory(chatId, 10)
-
-      // Look for messages that arrived after our last seen message
-      const newIncoming = currentHistory.find(m =>
-        !m.isFromMe &&
-        m.date.getTime() > lastSeenTimestamp &&
-        m.date.getTime() >= startTime
-      )
-
-      if (newIncoming) {
-        clearInterval(checkInterval)
-        clearTimeout(timeout)
-        resolve(newIncoming)
-      }
-    }, 2000) // Check every 2 seconds
-  })
-}
-
-/**
- * Activate agent and run conversation
+ * Activate agent and send ONE message
+ * Returns immediately after sending - the incoming message handler
+ * will trigger the next message when the friend responds.
+ * 
+ * @param isInitialActivation - true if this is the first activation (resets counters)
  */
 export async function activateAgent(
   sdk: IMessageSDK,
   tracker: ConversationTracker,
   conv: ConversationState,
-  config: AgentConfig
+  config: AgentConfig,
+  isInitialActivation: boolean = true
 ): Promise<void> {
   try {
     // Mark agent as active
-    tracker.markAgentActive(conv.chatId)
+    tracker.markAgentActive(conv.chatId, isInitialActivation)
 
     if (config.debug) {
-      console.log(`\n[AgentCore] 🤖 Agent activated for ${conv.friendName}`)
+      if (isInitialActivation) {
+        console.log(`\n[AgentCore] 🤖 Agent activated for ${conv.friendName}`)
+      } else {
+        console.log(`\n[AgentCore] 🤖 Agent continuing conversation with ${conv.friendName}`)
+      }
+    }
+
+    // Get fresh conversation state
+    const currentConv = tracker.getConversation(conv.chatId)
+    if (!currentConv) {
+      console.error('[AgentCore] Conversation not found after activation')
+      return
+    }
+
+    // Check if we've hit the message limit
+    if (currentConv.messagesSent >= config.maxMessagesToSend) {
+      if (config.debug) {
+        console.log(`[AgentCore] Reached message limit (${currentConv.messagesSent}/${config.maxMessagesToSend}), sending wind-down`)
+      }
+
+      // Get user's message history for style
+      const userMessages = tracker.getUserMessageHistory(conv.chatId, config.styleAnalysisCount)
+      await sendWindDownMessage(sdk, tracker, currentConv, userMessages, config)
+      tracker.markAgentInactive(conv.chatId)
+      return
     }
 
     // Get user's message history for style analysis
@@ -147,11 +130,11 @@ export async function activateAgent(
     // Get conversation history with friend
     const conversationHistory = tracker.getConversationHistory(conv.chatId, 20)
 
-    // Run conversation loop
-    await runAgentConversation(sdk, tracker, conv, userMessages, conversationHistory, config)
+    // Send ONE message
+    await sendAgentMessage(sdk, tracker, currentConv, userMessages, conversationHistory, config)
 
   } catch (error) {
-    console.error(`[AgentCore] Error activating agent for ${conv.chatId}:`, error)
+    console.error(`[AgentCore] Error in agent for ${conv.chatId}:`, error)
 
     // Notify user of error
     try {
@@ -169,9 +152,10 @@ export async function activateAgent(
 }
 
 /**
- * Main conversation loop
+ * Send a single agent message
+ * Does NOT wait for response - returns immediately after sending
  */
-async function runAgentConversation(
+async function sendAgentMessage(
   sdk: IMessageSDK,
   tracker: ConversationTracker,
   conv: ConversationState,
@@ -179,31 +163,21 @@ async function runAgentConversation(
   conversationHistory: Message[],
   config: AgentConfig
 ): Promise<void> {
-  let messagesSent = 0
+  // Prepare conversation context for agent
+  const recentHistory = conversationHistory.slice(-10)
+  const historyText = recentHistory
+    .map(m => `${m.isFromMe ? 'You' : conv.friendName}: ${m.text || '(attachment)'}`)
+    .join('\n')
 
-  while (messagesSent < config.maxMessagesToSend) {
-    // Check if user took back control
-    const currentConv = tracker.getConversation(conv.chatId)
-    if (!currentConv || !currentConv.isAgentActive) {
-      if (config.debug) {
-        console.log('[AgentCore] User took back control, stopping agent')
-      }
-      return
-    }
+  const userMessagesForStyle = userMessages.map(m => ({
+    text: m.text || '',
+    date: m.date.toISOString()
+  }))
 
-    // Prepare conversation context for agent
-    const recentHistory = conversationHistory.slice(-10)
-    const historyText = recentHistory
-      .map(m => `${m.isFromMe ? 'You' : conv.friendName}: ${m.text || '(attachment)'}`)
-      .join('\n')
+  const messagesSent = conv.messagesSent
 
-    const userMessagesForStyle = userMessages.map(m => ({
-      text: m.text || '',
-      date: m.date.toISOString()
-    }))
-
-    // Build context for agent
-    const context = `
+  // Build context for agent
+  const context = `
 Current situation:
 - You are texting with ${conv.friendName}
 - You have sent ${messagesSent} messages so far in this session
@@ -227,86 +201,44 @@ ${messagesSent >= config.maxMessagesToSend - 1
 Respond with ONLY the message text you want to send - no explanations, no quotes, just the raw message as you would type it.
 `
 
-    try {
-      // Generate response using agent
-      if (config.debug) {
-        console.log(`\n[AgentCore] Generating message ${messagesSent + 1}/${config.maxMessagesToSend}...`)
-      }
-
-      const response = await relationshipAgent.generate(context)
-
-      let messageText = response.text?.trim() || ''
-
-      // Clean up response (remove quotes, explanations, etc.)
-      messageText = cleanupAgentResponse(messageText)
-
-      if (!messageText) {
-        console.error('[AgentCore] Agent generated empty message, stopping')
-        break
-      }
-
-      if (config.debug) {
-        console.log(`[AgentCore] 📤 Sending: "${messageText}"`)
-      }
-
-      // Send message to friend
-      await sdk.send(conv.chatId, messageText)
-
-      // Update tracker
-      messagesSent++
-      tracker.incrementMessageCount(conv.chatId)
-
-      // Check if should wind down
-      if (messagesSent >= config.maxMessagesToSend) {
-        if (config.debug) {
-          console.log('[AgentCore] Reached message limit, winding down')
-        }
-        break
-      }
-
-      // Wait for friend's response
-      if (config.debug) {
-        console.log(`[AgentCore] ⏳ Waiting for ${conv.friendName}'s response...`)
-      }
-
-      const friendResponse = await waitForResponse(
-        sdk,
-        conv.chatId,
-        config.responseTimeoutMs,
-        tracker
-      )
-
-      if (!friendResponse) {
-        if (config.debug) {
-          console.log('[AgentCore] No response from friend, winding down')
-        }
-
-        // Send wind-down message
-        await sendWindDownMessage(sdk, tracker, conv, userMessages, config)
-        break
-      }
-
-      if (config.debug) {
-        console.log(`[AgentCore] 📨 Received: "${friendResponse.text || '(attachment)'}"`)
-      }
-
-      // Add friend's response to history
-      conversationHistory.push(friendResponse)
-
-      // Small delay to seem natural
-      await new Promise(resolve => setTimeout(resolve, 2000))
-
-    } catch (error) {
-      console.error('[AgentCore] Error in conversation loop:', error)
-      break
-    }
+  if (config.debug) {
+    console.log(`[AgentCore] Generating message ${messagesSent + 1}/${config.maxMessagesToSend}...`)
   }
 
-  // Deactivate agent
-  tracker.markAgentInactive(conv.chatId)
+  const response = await relationshipAgent.generate(context)
+
+  let messageText = response.text?.trim() || ''
+
+  // Clean up response (remove quotes, explanations, etc.)
+  messageText = cleanupAgentResponse(messageText)
+
+  if (!messageText) {
+    console.error('[AgentCore] Agent generated empty message, deactivating')
+    tracker.markAgentInactive(conv.chatId)
+    return
+  }
 
   if (config.debug) {
-    console.log(`[AgentCore] ✅ Agent session complete for ${conv.friendName}\n`)
+    console.log(`[AgentCore] 📤 Sending: "${messageText}"`)
+  }
+
+  // Send message to friend
+  await sdk.send(conv.chatId, messageText)
+
+  // Update tracker
+  tracker.incrementMessageCount(conv.chatId)
+
+  // Check if this was the last message (hit limit)
+  const updatedConv = tracker.getConversation(conv.chatId)
+  if (updatedConv && updatedConv.messagesSent >= config.maxMessagesToSend) {
+    if (config.debug) {
+      console.log('[AgentCore] ✅ Reached message limit, deactivating agent')
+    }
+    tracker.markAgentInactive(conv.chatId)
+  } else {
+    if (config.debug) {
+      console.log(`[AgentCore] ⏳ Waiting for ${conv.friendName}'s response (event-driven)...`)
+    }
   }
 }
 

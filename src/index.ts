@@ -9,7 +9,7 @@ import { IMessageSDK } from '@photon-ai/imessage-kit'
 import { ConversationTracker } from './watchers/conversation-tracker.js'
 import { TimerManager } from './utils/timer-manager.js'
 import { parseUserResponse } from './utils/approval-parser.js'
-import { sendTakeoverPrompt, activateAgent } from './utils/agent-core.js'
+import { sendTakeoverPrompt, activateAgent, AI_CONTROL_WINDOW_MS } from './utils/agent-core.js'
 import type { AgentConfig } from './types/index.js'
 import * as dotenv from 'dotenv'
 
@@ -27,7 +27,6 @@ function loadConfig(): AgentConfig {
     approvalKeywords: ['take over', 'yes', 'sure', 'ok'],
     timerCheckIntervalMs: parseInt(process.env.TIMER_CHECK_INTERVAL_MS || '30000'),
     maxInactivityMs: parseInt(process.env.MAX_INACTIVITY_MS || '3600000'),
-    responseTimeoutMs: parseInt(process.env.RESPONSE_TIMEOUT_MS || '60000'),
     userIdentifier: process.env.USER_IDENTIFIER || '',
     cerebrasApiKey: process.env.CEREBRAS_API_KEY || '',
     debug: process.env.DEBUG === 'true'
@@ -127,8 +126,8 @@ async function main() {
                   console.log(`\n[Main] ✅ User approved takeover for ${awaitingConv.friendName}`)
                 }
 
-                // Activate agent
-                await activateAgent(sdk, tracker, awaitingConv, config)
+                // Activate agent (initial activation)
+                await activateAgent(sdk, tracker, awaitingConv, config, true)
 
               } else if (response === 'deny') {
                 if (config.debug) {
@@ -148,32 +147,44 @@ async function main() {
               console.log(`\n[Main] 📨 Message from ${message.senderName || message.sender}`)
             }
 
-            // Check if agent was recently active in this conversation
+            // Check if agent is currently active in this conversation
             const conv = tracker.getConversation(message.chatId)
-            if (conv && conv.lastAgentDeactivationTime && !conv.isAgentActive && !conv.awaitingApproval) {
-              const timeSinceDeactivation = Date.now() - conv.lastAgentDeactivationTime.getTime()
-              // If agent was deactivated within last 5 minutes, reactivate after 5 seconds
-              if (timeSinceDeactivation < 300000) { // 5 minutes
+            if (conv && conv.isAgentActive) {
+              // Check if still within the 5-minute AI control window
+              if (tracker.isWithinAgentWindow(message.chatId, AI_CONTROL_WINDOW_MS)) {
                 if (config.debug) {
-                  console.log(`[Main] Friend responded ${Math.round(timeSinceDeactivation / 1000)}s after agent deactivation`)
-                  console.log('[Main] ⏳ Waiting 5 seconds before reactivating agent...')
+                  console.log('[Main] ⏳ Agent is active, waiting 5 seconds before responding...')
                 }
 
-                // Wait 5 seconds before reactivating
+                // Wait 5 seconds before sending next message
                 setTimeout(async () => {
-                  // Double-check that user hasn't taken over in the meantime
+                  // Double-check that agent is still active and within window
                   const currentConv = tracker.getConversation(message.chatId)
-                  if (currentConv && !currentConv.isAgentActive && !currentConv.awaitingApproval) {
+                  if (currentConv && currentConv.isAgentActive && 
+                      tracker.isWithinAgentWindow(message.chatId, AI_CONTROL_WINDOW_MS)) {
                     try {
                       if (config.debug) {
-                        console.log(`[Main] 🤖 Auto-reactivating agent for ${currentConv.friendName}`)
+                        console.log(`[Main] 🤖 Sending next agent message to ${currentConv.friendName}`)
                       }
-                      await activateAgent(sdk, tracker, currentConv, config)
+                      // Continue conversation (not initial activation)
+                      await activateAgent(sdk, tracker, currentConv, config, false)
                     } catch (error) {
-                      console.error('[Main] Error reactivating agent:', error)
+                      console.error('[Main] Error sending agent message:', error)
                     }
+                  } else if (currentConv && currentConv.isAgentActive) {
+                    // Window expired, deactivate agent
+                    if (config.debug) {
+                      console.log('[Main] ⏰ AI control window expired, deactivating agent')
+                    }
+                    tracker.markAgentInactive(message.chatId)
                   }
                 }, 5000) // 5 second delay
+              } else {
+                // Window expired, deactivate agent
+                if (config.debug) {
+                  console.log('[Main] ⏰ AI control window expired, deactivating agent')
+                }
+                tracker.markAgentInactive(message.chatId)
               }
             }
           }

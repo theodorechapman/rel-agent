@@ -32,6 +32,9 @@ export interface ConversationState {
   /** Timestamp of when the agent was last deactivated (for re-activation logic) */
   lastAgentDeactivationTime: Date | null
 
+  /** Timestamp of when the agent first took control (for 5-minute window) */
+  agentActivationTime: Date | null
+
   /** History of user's messages from this conversation */
   userMessageHistory: Message[]
 
@@ -60,9 +63,6 @@ export interface AgentConfig {
 
   /** Maximum inactivity time before giving up (default: 3600000 = 1 hour) */
   maxInactivityMs: number
-
-  /** Timeout for waiting for friend's response (default: 60000 = 1 minute) */
-  responseTimeoutMs: number
 
   /** User's own identifier (phone number or iMessage ID) */
   userIdentifier: string
